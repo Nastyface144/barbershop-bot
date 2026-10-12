@@ -25,7 +25,7 @@ def welcome(name: str) -> str:
 
 
 def services_and_prices(services: list[Service]) -> str:
-    lines = [f"💈 <b>Услуги и цены</b>\n"]
+    lines = ["💈 <b>Услуги и цены</b>\n"]
     for s in services:
         lines.append(f"{s.emoji} <b>{escape(s.name)}</b>\n      {fmt_price(s.price)} · {fmt_duration(s.duration)}")
     return "\n".join(lines)
