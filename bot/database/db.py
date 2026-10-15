@@ -10,6 +10,7 @@ from bot.database.models import Appointment, DayClosure, Master, Service
 logger = logging.getLogger(__name__)
 
 FULL_DAY = -1  # значение start_min для закрытия всего дня
+SALON = 0  # значение master_id для закрытия всего салона
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS masters (
@@ -50,9 +51,23 @@ CREATE INDEX IF NOT EXISTS idx_appointments_user
 
 CREATE TABLE IF NOT EXISTS closures (
     day       TEXT NOT NULL,
+    master_id INTEGER NOT NULL DEFAULT 0,
     start_min INTEGER NOT NULL,
-    PRIMARY KEY (day, start_min)
+    PRIMARY KEY (day, master_id, start_min)
 );
+"""
+
+# Закрытия первой версии были только для всего салона — переносим их с master_id = 0
+MIGRATE_CLOSURES = """
+ALTER TABLE closures RENAME TO closures_old;
+CREATE TABLE closures (
+    day       TEXT NOT NULL,
+    master_id INTEGER NOT NULL DEFAULT 0,
+    start_min INTEGER NOT NULL,
+    PRIMARY KEY (day, master_id, start_min)
+);
+INSERT INTO closures (day, master_id, start_min) SELECT day, 0, start_min FROM closures_old;
+DROP TABLE closures_old;
 """
 
 APPOINTMENT_SELECT = """
@@ -102,6 +117,7 @@ class Database:
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.execute("PRAGMA foreign_keys=ON")
         await self._conn.executescript(SCHEMA)
+        await self._migrate()
         await self._seed()
         await self._conn.commit()
         logger.info("База данных готова: %s", self.path)
@@ -110,6 +126,13 @@ class Database:
         if self._conn is not None:
             await self._conn.close()
             self._conn = None
+
+    async def _migrate(self) -> None:
+        async with self.conn.execute("PRAGMA table_info(closures)") as cur:
+            columns = {row["name"] for row in await cur.fetchall()}
+        if "master_id" not in columns:
+            logger.info("Обновляю таблицу закрытий: добавляю закрытия по мастерам")
+            await self.conn.executescript(MIGRATE_CLOSURES)
 
     async def _seed(self) -> None:
         async with self.conn.execute("SELECT COUNT(*) FROM masters") as cur:
@@ -166,44 +189,48 @@ class Database:
                 busy[date.fromisoformat(row["day"])].append((row["start_min"], row["end_min"]))
         return busy
 
-    async def get_closures(self, first: date, last: date) -> dict[date, DayClosure]:
-        full: set[date] = set()
-        slots: dict[date, set[int]] = defaultdict(set)
+    async def get_closure_rows(self, first: date, last: date) -> dict[date, set[tuple[int, int]]]:
+        """Все закрытия по дням: {день: {(master_id, start_min), ...}}."""
+        rows: dict[date, set[tuple[int, int]]] = defaultdict(set)
         async with self.conn.execute(
-            "SELECT day, start_min FROM closures WHERE day BETWEEN ? AND ?",
+            "SELECT day, master_id, start_min FROM closures WHERE day BETWEEN ? AND ?",
             (first.isoformat(), last.isoformat()),
         ) as cur:
             for row in await cur.fetchall():
-                day = date.fromisoformat(row["day"])
-                if row["start_min"] == FULL_DAY:
-                    full.add(day)
-                else:
-                    slots[day].add(row["start_min"])
-        return {
-            day: DayClosure(full=day in full, slots=frozenset(slots.get(day, ())))
-            for day in full | slots.keys()
-        }
+                rows[date.fromisoformat(row["day"])].add((row["master_id"], row["start_min"]))
+        return rows
 
-    async def get_closure(self, day: date) -> DayClosure:
-        return (await self.get_closures(day, day)).get(day, DayClosure())
+    async def get_closures(self, first: date, last: date, master_ids: tuple[int, ...]) -> dict[date, DayClosure]:
+        """Закрытия, объединённые по указанным мастерам (SALON — весь салон)."""
+        result = {}
+        for day, rows in (await self.get_closure_rows(first, last)).items():
+            relevant = [start for master_id, start in rows if master_id in master_ids]
+            if relevant:
+                result[day] = DayClosure(
+                    full=FULL_DAY in relevant,
+                    slots=frozenset(start for start in relevant if start != FULL_DAY),
+                )
+        return result
 
-    async def toggle_day_closed(self, day: date) -> bool:
+    async def get_closure(self, day: date, master_ids: tuple[int, ...]) -> DayClosure:
+        return (await self.get_closures(day, day, master_ids)).get(day, DayClosure())
+
+    async def toggle_day_closed(self, day: date, master_id: int = SALON) -> bool:
         """Закрывает/открывает весь день. Возвращает True, если день теперь закрыт."""
-        return await self._toggle_closure(day, FULL_DAY)
+        return await self._toggle_closure(day, master_id, FULL_DAY)
 
-    async def toggle_slot_closed(self, day: date, start_min: int) -> bool:
-        return await self._toggle_closure(day, start_min)
+    async def toggle_slot_closed(self, day: date, start_min: int, master_id: int = SALON) -> bool:
+        return await self._toggle_closure(day, master_id, start_min)
 
-    async def _toggle_closure(self, day: date, start_min: int) -> bool:
+    async def _toggle_closure(self, day: date, master_id: int, start_min: int) -> bool:
+        params = (day.isoformat(), master_id, start_min)
         cur = await self.conn.execute(
-            "DELETE FROM closures WHERE day = ? AND start_min = ?", (day.isoformat(), start_min)
+            "DELETE FROM closures WHERE day = ? AND master_id = ? AND start_min = ?", params
         )
         if cur.rowcount:
             await self.conn.commit()
             return False
-        await self.conn.execute(
-            "INSERT INTO closures (day, start_min) VALUES (?, ?)", (day.isoformat(), start_min)
-        )
+        await self.conn.execute("INSERT INTO closures (day, master_id, start_min) VALUES (?, ?, ?)", params)
         await self.conn.commit()
         return True
 
