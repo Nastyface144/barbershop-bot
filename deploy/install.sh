@@ -20,6 +20,9 @@ apt-get install -y -qq python3 python3-venv git >/dev/null
 
 echo "==> Загружаю код бота"
 if [ -d "$APP_DIR/.git" ]; then
+    # Папка принадлежит пользователю бота, а скрипт работает от root
+    git config --global --get-all safe.directory | grep -qx "$APP_DIR" \
+        || git config --global --add safe.directory "$APP_DIR"
     git -C "$APP_DIR" pull --ff-only
 else
     git clone --depth 1 "$REPO_URL" "$APP_DIR"
