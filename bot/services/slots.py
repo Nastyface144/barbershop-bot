@@ -2,7 +2,7 @@
 import asyncio
 from datetime import date, datetime, timedelta
 
-from bot.config import BOOKING_DAYS, MIN_LEAD_MIN, SLOT_STEP_MIN, WORK_END_MIN, WORK_START_MIN
+from bot.config import BOOKING_DAYS, MAX_ACTIVE_BOOKINGS, MIN_LEAD_MIN, SLOT_STEP_MIN, WORK_END_MIN, WORK_START_MIN
 from bot.database import SALON, Appointment, Database, DayClosure, Service
 
 # Защита от гонки: два клиента не смогут одновременно занять одно время
@@ -86,6 +86,19 @@ async def get_available_days(db: Database, service: Service, master_id: int, now
     return result
 
 
+class BookingError(Exception):
+    """Запись не создана. reason: taken | overlap | limit."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+def overlaps_own(start: int, end: int, day: date, own: list[Appointment]) -> bool:
+    """Пересекается ли время с другими записями самого клиента."""
+    return any(a.day == day and start < a.end_min and a.start_min < end for a in own)
+
+
 async def book(
     db: Database,
     *,
@@ -97,11 +110,16 @@ async def book(
     day: date,
     start_min: int,
     now: datetime,
-) -> Appointment | None:
-    """Создаёт запись, если время всё ещё свободно. Иначе возвращает None."""
+) -> Appointment:
+    """Создаёт запись. Если это невозможно, бросает BookingError с причиной."""
     async with _booking_lock:
+        own = await db.get_user_appointments(user_id, now)
+        if overlaps_own(start_min, start_min + service.duration, day, own):
+            raise BookingError("overlap")
+        if len(own) >= MAX_ACTIVE_BOOKINGS:
+            raise BookingError("limit")
         if start_min not in await get_free_slots(db, service, master_id, day, now):
-            return None
+            raise BookingError("taken")
 
         starts_at = datetime.combine(day, datetime.min.time(), tzinfo=now.tzinfo) + timedelta(minutes=start_min)
         left = starts_at - now

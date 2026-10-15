@@ -63,5 +63,5 @@ async def on_cancel_yes(
 
     logger.info("Запись #%s отменена пользователем %s", appointment.id, callback.from_user.id)
     await notify(callback, "Запись отменена")
-    await show_my(callback, db, config, notice=texts.CANCELLED)
+    await render(callback, texts.welcome(callback.from_user.first_name, texts.CANCELLED), kb.main_menu())
     await notify_admins(bot, config, texts.admin_cancelled(appointment))

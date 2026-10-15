@@ -9,12 +9,14 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message, Telegram
 
 from bot import texts
 from bot.config import SLOT_STEP_MIN, Config
-from bot.database import FULL_DAY, SALON, Appointment, Database
+from bot.database import SALON, Appointment, Database
 from bot.keyboards import admin as kb
 from bot.keyboards import client as client_kb
 from bot.keyboards.calendar import month_page
 from bot.keyboards.callbacks import AdminApptCb, AdminCb
 from bot.services import slots
+from bot.services.notify import notify_admins
+from bot.services.schedule import day_report
 from bot.utils.formatting import key_to_day
 from bot.utils.render import notify, render
 
@@ -48,31 +50,19 @@ def _is_upcoming(appointment: Appointment, config: Config) -> bool:
     return appointment.status == "active" and appointment.starts_at(config.timezone) > _now(config)
 
 
-async def _panel(db: Database, config: Config) -> tuple[str, InlineKeyboardMarkup]:
+async def _panel(db: Database, config: Config, notice: str = "") -> tuple[str, InlineKeyboardMarkup]:
     today = _now(config).date()
     tomorrow = today + timedelta(days=1)
     today_count = await db.count_day_appointments(today)
     tomorrow_count = await db.count_day_appointments(tomorrow)
     return (
-        texts.admin_panel(today_count, tomorrow_count),
+        texts.admin_panel(today_count, tomorrow_count, notice),
         kb.panel(today, tomorrow, today_count, tomorrow_count),
     )
 
 
 async def show_day(callback: CallbackQuery, db: Database, config: Config, day: date, notice: str = "") -> None:
-    appointments = await db.get_day_appointments(day)
-    closures = (await db.get_closure_rows(day, day)).get(day, set())
-    masters = {m.id: m.name for m in await db.get_masters()}
-    masters_off = [masters[m] for m, start in sorted(closures) if start == FULL_DAY and m in masters]
-    text = texts.admin_day(
-        day,
-        _day_label(day, _now(config).date()),
-        appointments,
-        salon_closed=(SALON, FULL_DAY) in closures,
-        masters_off=masters_off,
-        total=sum(a.price for a in appointments),
-        notice=notice,
-    )
+    text, appointments = await day_report(db, day, _day_label(day, _now(config).date()), notice)
     cancellable = [a for a in appointments if _is_upcoming(a, config)]
     await render(callback, text, kb.day_view(day, cancellable))
 
@@ -183,7 +173,14 @@ async def on_cancel_yes(
         delivered = False
 
     await notify(callback, "Запись отменена")
-    await show_day(callback, db, config, appointment.day, notice=texts.admin_cancelled_notice(delivered))
+    text, markup = await _panel(db, config, texts.admin_cancelled_notice(delivered))
+    await render(callback, text, markup)
+    await notify_admins(
+        bot,
+        config,
+        texts.admin_cancelled_by_admin(appointment, callback.from_user.full_name),
+        exclude=callback.from_user.id,
+    )
 
 
 # --- Закрытие дней и времени ---
