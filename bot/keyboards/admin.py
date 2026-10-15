@@ -10,6 +10,7 @@ from bot.utils.formatting import day_to_key, fmt_date_short, fmt_time
 SLOTS_PER_ROW = 4
 TABS_PER_ROW = 2
 CLIENT_NAME_LIMIT = 14
+MAX_CANCEL_BUTTONS = 40  # у Telegram есть предел на число кнопок в сообщении
 
 
 def _btn(
@@ -45,7 +46,7 @@ def day_view(day: date, cancellable: list[Appointment]) -> InlineKeyboardMarkup:
                 callback_data=AdminApptCb(appointment_id=a.id, action="ask").pack(),
             )
         ]
-        for a in cancellable
+        for a in cancellable[:MAX_CANCEL_BUTTONS]
     ]
     prev_day, next_day = day - timedelta(days=1), day + timedelta(days=1)
     rows.append(

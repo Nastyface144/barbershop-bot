@@ -22,6 +22,8 @@ WORK_END_MIN = 20 * 60  # 20:00
 SLOT_STEP_MIN = 30  # шаг сетки времени
 BOOKING_DAYS = _booking_days()
 MIN_LEAD_MIN = 30  # не раньше чем за 30 минут до начала
+MAX_ACTIVE_BOOKINGS = 3  # сколько будущих записей может быть у одного клиента
+DAILY_DIGEST_HOUR = 9  # во сколько админ получает план на день
 
 
 @dataclass(frozen=True)

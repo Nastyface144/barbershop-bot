@@ -3,6 +3,7 @@ from datetime import date, timedelta
 from html import escape
 
 from bot import demo_data
+from bot.config import MAX_ACTIVE_BOOKINGS
 from bot.database import Appointment, Master, Service
 from bot.utils.formatting import (
     client_label,
@@ -10,14 +11,16 @@ from bot.utils.formatting import (
     fmt_duration,
     fmt_price,
     fmt_time,
+    plural,
 )
 
 TOTAL_STEPS = 4
 
 
-def welcome(name: str) -> str:
+def welcome(name: str, notice: str = "") -> str:
+    head = f"{notice}\n\n" if notice else ""
     return (
-        f"💈 <b>{escape(demo_data.SHOP_NAME)}</b>\n\n"
+        f"{head}💈 <b>{escape(demo_data.SHOP_NAME)}</b>\n\n"
         f"Привет, {escape(name)}! Здесь можно записаться к барберу за минуту — "
         "без звонков и ожидания.\n\n"
         "Выберите, что нужно 👇"
@@ -91,11 +94,17 @@ def booked(a: Appointment) -> str:
     return (
         f"✅ <b>Вы записаны!</b>\n\n{details}\n\n"
         f"📍 {escape(demo_data.SHOP_ADDRESS)}\n\n"
-        "Напомним о визите за сутки и за 2 часа. Ждём вас!"
+        "Напомним о визите за сутки и за 2 часа. Ждём вас!\n\n"
+        "Что-то ещё? 👇"
     )
 
 
 SLOT_TAKEN = "😔 Это время только что заняли. Выберите другое."
+BOOKING_OVERLAP = "У вас уже есть запись на это время. Выберите другое."
+BOOKING_LIMIT = (
+    f"У вас уже {MAX_ACTIVE_BOOKINGS} {plural(MAX_ACTIVE_BOOKINGS, ('активная запись', 'активные записи', 'активных записей'))}. "
+    "Отмените одну из них, чтобы записаться снова."
+)
 DAY_FULL = "На этот день свободного времени не осталось."
 DAY_UNAVAILABLE = "Эта дата недоступна для записи."
 SESSION_EXPIRED = "Данные устарели, начните заново."
@@ -162,9 +171,14 @@ def admin_cancelled(a: Appointment) -> str:
     return f"❌ <b>Клиент отменил запись</b>\n\n{_admin_details(a)}"
 
 
-def admin_panel(today_count: int, tomorrow_count: int) -> str:
+def admin_cancelled_by_admin(a: Appointment, admin_name: str) -> str:
+    return f"❌ <b>Запись отменена администратором</b> ({escape(admin_name)})\n\n{_admin_details(a)}"
+
+
+def admin_panel(today_count: int, tomorrow_count: int, notice: str = "") -> str:
+    head = f"{notice}\n\n" if notice else ""
     return (
-        "🛠 <b>Панель администратора</b>\n\n"
+        f"{head}🛠 <b>Панель администратора</b>\n\n"
         f"📅 Сегодня: <b>{today_count}</b> {_records_word(today_count)}\n"
         f"📅 Завтра: <b>{tomorrow_count}</b> {_records_word(tomorrow_count)}"
     )
@@ -189,14 +203,26 @@ def admin_day(
     if not appointments:
         return f"{head}\n\nЗаписей нет."
     head += f"\n{len(appointments)} {_records_word(len(appointments))} на {fmt_price(total)}"
-    blocks = [head]
-    for a in appointments:
-        blocks.append(
-            f"<b>{fmt_time(a.start_min)}–{fmt_time(a.end_min)}</b> · {escape(a.master_name)}\n"
+    text = head
+    for shown, a in enumerate(appointments):
+        block = (
+            f"\n\n<b>{fmt_time(a.start_min)}–{fmt_time(a.end_min)}</b> · {escape(a.master_name)}\n"
             f"✂️ {escape(a.service_name)} — {fmt_price(a.price)}\n"
             f"👤 {client_label(a.client_name, a.username)}"
         )
-    return "\n\n".join(blocks)
+        if len(text) + len(block) > MESSAGE_LIMIT:
+            rest = len(appointments) - shown
+            return f"{text}\n\n…и ещё {rest} {_records_word(rest)}"
+        text += block
+    return text
+
+
+# Telegram ограничивает сообщение 4096 символами — оставляем запас
+MESSAGE_LIMIT = 3900
+
+
+def admin_digest(report: str) -> str:
+    return f"☀️ <b>Доброе утро! План на сегодня</b>\n\n{report}"
 
 
 def admin_cancel_confirm(a: Appointment) -> str:

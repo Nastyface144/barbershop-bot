@@ -6,8 +6,9 @@ from aiogram import Bot, F, Router
 from aiogram.types import CallbackQuery
 
 from bot import texts
-from bot.config import Config
+from bot.config import MAX_ACTIVE_BOOKINGS, Config
 from bot.database import Database, Master, Service
+from bot.handlers.appointments import show_my
 from bot.keyboards import client as kb
 from bot.keyboards.calendar import month_page
 from bot.keyboards.callbacks import ConfirmCb, DayCb, MasterCb, MenuCb, ServiceCb, TimeCb
@@ -19,6 +20,12 @@ from bot.utils.render import notify, render
 logger = logging.getLogger(__name__)
 
 router = Router(name="booking")
+
+BOOKING_ERRORS = {
+    "taken": texts.SLOT_TAKEN,
+    "overlap": texts.BOOKING_OVERLAP,
+    "limit": texts.BOOKING_LIMIT,
+}
 
 
 def _now(config: Config) -> datetime:
@@ -59,11 +66,20 @@ async def show_calendar(
     )
 
 
+async def _free_for_client(
+    callback: CallbackQuery, db: Database, service: Service, master_id: int, day: date, now: datetime
+) -> list[int]:
+    """Свободное время мастера без того, что пересекается с другими записями самого клиента."""
+    free = await slots.get_free_slots(db, service, master_id, day, now)
+    own = await db.get_user_appointments(callback.from_user.id, now)
+    return [m for m in free if not slots.overlaps_own(m, m + service.duration, day, own)]
+
+
 async def show_times(
     callback: CallbackQuery, db: Database, config: Config, service: Service, master: Master, day: date
 ) -> None:
     now = _now(config)
-    free = await slots.get_free_slots(db, service, master.id, day, now)
+    free = await _free_for_client(callback, db, service, master.id, day, now)
     bookable = slots.is_bookable_day(day, now)
     page = month_page(now.date(), day) if bookable else 0
     if not free:
@@ -79,7 +95,11 @@ async def show_times(
 
 
 @router.callback_query(MenuCb.filter(F.action == "book"))
-async def on_book(callback: CallbackQuery, db: Database) -> None:
+async def on_book(callback: CallbackQuery, db: Database, config: Config) -> None:
+    own = await db.get_user_appointments(callback.from_user.id, _now(config))
+    if len(own) >= MAX_ACTIVE_BOOKINGS:
+        await notify(callback, texts.BOOKING_LIMIT, alert=True)
+        return await show_my(callback, db, config)
     await show_services(callback, db)
 
 
@@ -115,7 +135,7 @@ async def on_time(callback: CallbackQuery, callback_data: TimeCb, db: Database, 
     if service is None or master is None or day is None:
         return await _expired(callback, db)
 
-    free = await slots.get_free_slots(db, service, master.id, day, _now(config))
+    free = await _free_for_client(callback, db, service, master.id, day, _now(config))
     if callback_data.minutes not in free:
         await notify(callback, texts.SLOT_TAKEN, alert=True)
         return await show_times(callback, db, config, service, master, day)
@@ -137,22 +157,25 @@ async def on_confirm(
         return await _expired(callback, db)
 
     user = callback.from_user
-    appointment = await slots.book(
-        db,
-        user_id=user.id,
-        client_name=user.full_name,
-        username=user.username,
-        service=service,
-        master_id=master.id,
-        day=day,
-        start_min=callback_data.minutes,
-        now=_now(config),
-    )
-    if appointment is None:
-        await notify(callback, texts.SLOT_TAKEN, alert=True)
+    try:
+        appointment = await slots.book(
+            db,
+            user_id=user.id,
+            client_name=user.full_name,
+            username=user.username,
+            service=service,
+            master_id=master.id,
+            day=day,
+            start_min=callback_data.minutes,
+            now=_now(config),
+        )
+    except slots.BookingError as e:
+        await notify(callback, BOOKING_ERRORS[e.reason], alert=True)
+        if e.reason == "limit":
+            return await show_my(callback, db, config)
         return await show_times(callback, db, config, service, master, day)
 
     logger.info("Новая запись #%s от пользователя %s", appointment.id, user.id)
     await notify(callback, "✅ Готово!")
-    await render(callback, texts.booked(appointment), kb.booked())
+    await render(callback, texts.booked(appointment), kb.main_menu())
     await notify_admins(bot, config, texts.admin_new_booking(appointment))

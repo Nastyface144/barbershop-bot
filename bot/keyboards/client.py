@@ -120,15 +120,6 @@ def confirm(service_id: int, master_id: int, day: date, minutes: int) -> InlineK
     )
 
 
-def booked() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [_btn("📋 Мои записи", MenuCb(action="my"))],
-            [_btn("🏠 В меню", MenuCb(action="main"))],
-        ]
-    )
-
-
 # --- Мои записи ---
 
 
