@@ -63,6 +63,24 @@ python -m bot
 
 > Администратор должен хотя бы раз написать боту `/start`, иначе Telegram не даст боту отправлять ему уведомления.
 
+## Запуск на VPS (24/7)
+
+На сервере с Ubuntu или Debian подключитесь по SSH под `root` и выполните одну команду:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Nastyface144/barbershop-bot/main/deploy/install.sh | bash
+```
+
+Скрипт поставит Python и зависимости, спросит токен бота и ваш Telegram ID и настроит автозапуск. Бот будет работать круглосуточно и сам перезапустится после сбоя или перезагрузки сервера. Повторный запуск той же команды обновляет бота до последней версии.
+
+Полезные команды:
+
+```bash
+journalctl -u barbershop-bot -f       # лог бота (выход: Ctrl+C)
+systemctl restart barbershop-bot      # перезапуск
+nano /opt/barbershop-bot/.env         # изменить токен или ID, затем перезапуск
+```
+
 ## Структура проекта
 
 ```
