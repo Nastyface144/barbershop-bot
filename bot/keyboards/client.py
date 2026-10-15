@@ -157,3 +157,12 @@ def cancel_confirm(appointment_id: int) -> InlineKeyboardMarkup:
 def reminder() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[_btn("📋 Мои записи", MenuCb(action="my"))]])
 
+
+
+def rebook() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [_btn("✂️ Записаться снова", MenuCb(action="book"))],
+            [_btn("📋 Мои записи", MenuCb(action="my"))],
+        ]
+    )

@@ -170,13 +170,25 @@ def admin_panel(today_count: int, tomorrow_count: int) -> str:
     )
 
 
-def admin_day(day: date, label: str, appointments: list[Appointment], closed: bool) -> str:
+def admin_day(
+    day: date,
+    label: str,
+    appointments: list[Appointment],
+    salon_closed: bool,
+    masters_off: list[str],
+    total: int,
+    notice: str = "",
+) -> str:
     title = f"{label}, {fmt_date(day)}" if label else fmt_date(day).capitalize()
-    head = f"📅 <b>{title}</b>"
-    if closed:
-        head += "\n🔒 День закрыт для записи"
+    head = f"{notice}\n\n" if notice else ""
+    head += f"📅 <b>{title}</b>"
+    if salon_closed:
+        head += "\n🔒 Салон закрыт для записи"
+    for name in masters_off:
+        head += f"\n🔒 {escape(name)} не принимает"
     if not appointments:
         return f"{head}\n\nЗаписей нет."
+    head += f"\n{len(appointments)} {_records_word(len(appointments))} на {fmt_price(total)}"
     blocks = [head]
     for a in appointments:
         blocks.append(
@@ -187,28 +199,65 @@ def admin_day(day: date, label: str, appointments: list[Appointment], closed: bo
     return "\n\n".join(blocks)
 
 
-def admin_calendar() -> str:
+def admin_cancel_confirm(a: Appointment) -> str:
+    return (
+        f"❓ <b>Отменить запись клиента?</b>\n\n{_admin_details(a)}\n\n"
+        "Клиент получит сообщение об отмене."
+    )
+
+
+def admin_cancelled_notice(delivered: bool) -> str:
+    if delivered:
+        return "✅ Запись отменена, клиент получил уведомление."
+    return "✅ Запись отменена. ⚠️ Уведомить клиента не удалось — свяжитесь с ним сами."
+
+
+def cancelled_by_salon(a: Appointment) -> str:
+    details = _details(a.service_name, a.master_name, a.day, a.start_min, a.end_min, a.price)
+    return (
+        f"😔 <b>Запись отменена салоном</b>\n\n{details}\n\n"
+        "Приносим извинения! Выберите другое удобное время — это займёт минуту."
+    )
+
+
+def admin_calendar(action: str) -> str:
+    if action == "day":
+        return (
+            "🗓 <b>Записи на другую дату</b>\n\n"
+            "Выберите дату.\n"
+            "🔒 — салон закрыт, • — есть закрытое время."
+        )
     return (
         "🔒 <b>Закрыть день или время</b>\n\n"
         "Выберите дату.\n"
-        "🔒 — день закрыт, • — закрыта часть времени."
+        "🔒 — салон закрыт, • — есть закрытое время."
     )
 
 
-def admin_manage_day(day: date, closed: bool, appointments_count: int) -> str:
-    status = "🔒 закрыт" if closed else "🟢 открыт"
-    text = (
-        f"🗓 <b>{fmt_date(day)}</b>\n\n"
-        f"Статус: {status}\n"
-        f"Записей: {appointments_count}\n\n"
-    )
+def admin_manage_day(
+    day: date, scope: str, closed: bool, salon_closed: bool, appointments_count: int
+) -> str:
+    text = f"🗓 <b>{fmt_date(day)}</b>\nНастраиваете: <b>{escape(scope)}</b>\n\n"
+    if salon_closed and not closed:
+        return text + "🔒 Весь салон закрыт в этот день. Откройте его во вкладке «🏠 Салон»."
+    text += f"Статус: {'🔒 закрыт' if closed else '🟢 открыт'}\nЗаписей: {appointments_count}\n\n"
     if closed:
         text += "Откройте день, чтобы клиенты снова могли записаться."
     else:
-        text += "Нажмите на время, чтобы закрыть или открыть его.\n🔒 — закрыто, 👤 — есть запись."
+        text += (
+            "Нажмите на время, чтобы закрыть или открыть его.\n"
+            "🔒 — закрыто, 👤 — есть запись"
+        )
+        if scope != SALON_SCOPE:
+            text += ", 🏠 — закрыто для всего салона"
+        text += "."
     if appointments_count:
-        text += "\n\n⚠️ Закрытие не отменяет уже созданные записи."
+        text += "\n\n⚠️ Закрытие не отменяет созданные записи — их можно отменить в списке записей."
     return text
+
+
+SALON_SCOPE = "весь салон"
+SLOT_CLOSED_FOR_SALON = "Это время закрыто для всего салона. Откройте его во вкладке «🏠 Салон»."
 
 
 def _records_word(n: int) -> str:

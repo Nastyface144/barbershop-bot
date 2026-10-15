@@ -3,7 +3,7 @@ import asyncio
 from datetime import date, datetime, timedelta
 
 from bot.config import BOOKING_DAYS, MIN_LEAD_MIN, SLOT_STEP_MIN, WORK_END_MIN, WORK_START_MIN
-from bot.database import Appointment, Database, DayClosure, Service
+from bot.database import SALON, Appointment, Database, DayClosure, Service
 
 # Защита от гонки: два клиента не смогут одновременно занять одно время
 _booking_lock = asyncio.Lock()
@@ -60,7 +60,7 @@ async def get_free_slots(db: Database, service: Service, master_id: int, day: da
     if not is_bookable_day(day, now):
         return []
     busy = await db.get_busy(master_id, day, day)
-    closure = await db.get_closure(day)
+    closure = await db.get_closure(day, (SALON, master_id))
     return free_slots_for_day(
         day=day, duration=service.duration, busy=busy.get(day, []), closure=closure, now=now
     )
@@ -70,7 +70,7 @@ async def get_available_days(db: Database, service: Service, master_id: int, now
     """Для каждого дня окна записи: есть ли хотя бы одно свободное время."""
     first, last = booking_window(now)
     busy = await db.get_busy(master_id, first, last)
-    closures = await db.get_closures(first, last)
+    closures = await db.get_closures(first, last, (SALON, master_id))
     result = {}
     day = first
     while day <= last:

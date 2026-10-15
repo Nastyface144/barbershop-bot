@@ -49,6 +49,12 @@ class NoopCb(CallbackData, prefix="noop"):
 
 
 class AdminCb(CallbackData, prefix="adm"):
-    action: str  # panel | day | cal | manage | toggle_day | toggle_slot
+    action: str  # panel | day | cal | pick | manage | toggle_day | toggle_slot
     day: str = ""
     minutes: int = -1
+    master_id: int = 0  # 0 — весь салон
+
+
+class AdminApptCb(CallbackData, prefix="adma"):
+    appointment_id: int
+    action: str  # ask | yes
