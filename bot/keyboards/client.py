@@ -83,7 +83,7 @@ def masters(service_id: int, items: list[Master]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def calendar(service_id: int, master_id: int, availability: dict[date, bool]) -> InlineKeyboardMarkup:
+def calendar(service_id: int, master_id: int, availability: dict[date, bool], page: int) -> InlineKeyboardMarkup:
     days = sorted(availability)
 
     def cell(day: date) -> InlineKeyboardButton:
@@ -91,19 +91,22 @@ def calendar(service_id: int, master_id: int, availability: dict[date, bool]) ->
             return _btn(str(day.day), DayCb(service_id=service_id, master_id=master_id, day=day_to_key(day)))
         return noop_button("✖", "full")
 
-    rows = calendar_rows(days[0], days[-1], cell)
+    def nav(target: int) -> str:
+        return MasterCb(service_id=service_id, master_id=master_id, page=target).pack()
+
+    rows = calendar_rows(days[0], days[-1], page, cell, nav)
     rows.append(_back(ServiceCb(service_id=service_id)))
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def times(service_id: int, master_id: int, day: date, slots: list[int]) -> InlineKeyboardMarkup:
+def times(service_id: int, master_id: int, day: date, slots: list[int], page: int) -> InlineKeyboardMarkup:
     key = day_to_key(day)
     buttons = [
         _btn(fmt_time(m), TimeCb(service_id=service_id, master_id=master_id, day=key, minutes=m))
         for m in slots
     ]
     rows = [buttons[i : i + TIMES_PER_ROW] for i in range(0, len(buttons), TIMES_PER_ROW)]
-    rows.append(_back(MasterCb(service_id=service_id, master_id=master_id)))
+    rows.append(_back(MasterCb(service_id=service_id, master_id=master_id, page=page)))
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

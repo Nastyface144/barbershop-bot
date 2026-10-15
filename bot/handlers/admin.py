@@ -12,6 +12,7 @@ from bot.config import SLOT_STEP_MIN, Config
 from bot.database import FULL_DAY, SALON, Appointment, Database
 from bot.keyboards import admin as kb
 from bot.keyboards import client as client_kb
+from bot.keyboards.calendar import month_page
 from bot.keyboards.callbacks import AdminApptCb, AdminCb
 from bot.services import slots
 from bot.utils.formatting import key_to_day
@@ -76,13 +77,17 @@ async def show_day(callback: CallbackQuery, db: Database, config: Config, day: d
     await render(callback, text, kb.day_view(day, cancellable))
 
 
-async def show_calendar(callback: CallbackQuery, db: Database, config: Config, action: str) -> None:
+async def show_calendar(
+    callback: CallbackQuery, db: Database, config: Config, action: str, page: int = 0
+) -> None:
     first, last = slots.booking_window(_now(config))
     closures = await db.get_closure_rows(first, last)
-    await render(callback, texts.admin_calendar(action), kb.calendar(first, last, closures, action))
+    await render(callback, texts.admin_calendar(action), kb.calendar(first, last, closures, action, page))
 
 
-async def show_manage_day(callback: CallbackQuery, db: Database, day: date, master_id: int) -> None:
+async def show_manage_day(
+    callback: CallbackQuery, db: Database, config: Config, day: date, master_id: int
+) -> None:
     masters = await db.get_masters()
     names = {m.id: m.name for m in masters}
     if master_id not in names:
@@ -103,7 +108,9 @@ async def show_manage_day(callback: CallbackQuery, db: Database, day: date, mast
     await render(
         callback,
         texts.admin_manage_day(day, scope, own.full, salon.full, len(appointments)),
-        kb.manage_day(day, master_id, masters, own, salon, slots.all_slots(), booked),
+        kb.manage_day(
+            day, master_id, masters, own, salon, slots.all_slots(), booked, month_page(_now(config).date(), day)
+        ),
     )
 
 
@@ -138,8 +145,8 @@ async def on_day(callback: CallbackQuery, callback_data: AdminCb, db: Database, 
 
 
 @router.callback_query(AdminCb.filter(F.action == "pick"))
-async def on_pick(callback: CallbackQuery, db: Database, config: Config) -> None:
-    await show_calendar(callback, db, config, "day")
+async def on_pick(callback: CallbackQuery, callback_data: AdminCb, db: Database, config: Config) -> None:
+    await show_calendar(callback, db, config, "day", callback_data.page)
 
 
 @router.callback_query(AdminApptCb.filter(F.action == "ask"))
@@ -183,8 +190,8 @@ async def on_cancel_yes(
 
 
 @router.callback_query(AdminCb.filter(F.action == "cal"))
-async def on_calendar(callback: CallbackQuery, db: Database, config: Config) -> None:
-    await show_calendar(callback, db, config, "manage")
+async def on_calendar(callback: CallbackQuery, callback_data: AdminCb, db: Database, config: Config) -> None:
+    await show_calendar(callback, db, config, "manage", callback_data.page)
 
 
 @router.callback_query(AdminCb.filter(F.action == "manage"))
@@ -192,8 +199,8 @@ async def on_manage(callback: CallbackQuery, callback_data: AdminCb, db: Databas
     day = _editable_day(callback_data, config)
     if day is None:
         await notify(callback, "Прошедшие дни изменить нельзя.", alert=True)
-        return await on_calendar(callback, db, config)
-    await show_manage_day(callback, db, day, callback_data.master_id)
+        return await show_calendar(callback, db, config, "manage")
+    await show_manage_day(callback, db, config, day, callback_data.master_id)
 
 
 @router.callback_query(AdminCb.filter(F.action == "toggle_day"))
@@ -201,17 +208,17 @@ async def on_toggle_day(callback: CallbackQuery, callback_data: AdminCb, db: Dat
     day = _editable_day(callback_data, config)
     if day is None:
         await notify(callback, "Эту дату изменить нельзя.", alert=True)
-        return await on_calendar(callback, db, config)
+        return await show_calendar(callback, db, config, "manage")
     master_id = callback_data.master_id
     if master_id != SALON and await db.get_master(master_id) is None:
-        return await show_manage_day(callback, db, day, SALON)
+        return await show_manage_day(callback, db, config, day, SALON)
 
     closed = await db.toggle_day_closed(day, master_id)
     logger.info(
         "Админ %s %s день %s (мастер %s)", callback.from_user.id, "закрыл" if closed else "открыл", day, master_id
     )
     await notify(callback, "🔒 День закрыт" if closed else "🔓 День открыт")
-    await show_manage_day(callback, db, day, master_id)
+    await show_manage_day(callback, db, config, day, master_id)
 
 
 @router.callback_query(AdminCb.filter(F.action == "toggle_slot"))
@@ -219,16 +226,16 @@ async def on_toggle_slot(callback: CallbackQuery, callback_data: AdminCb, db: Da
     day = _editable_day(callback_data, config)
     if day is None or callback_data.minutes not in slots.all_slots():
         await notify(callback, "Это время изменить нельзя.", alert=True)
-        return await on_calendar(callback, db, config)
+        return await show_calendar(callback, db, config, "manage")
     master_id = callback_data.master_id
     if master_id != SALON:
         if await db.get_master(master_id) is None:
-            return await show_manage_day(callback, db, day, SALON)
+            return await show_manage_day(callback, db, config, day, SALON)
         salon = await db.get_closure(day, (SALON,))
         if salon.full or callback_data.minutes in salon.slots:
             await notify(callback, texts.SLOT_CLOSED_FOR_SALON, alert=True)
-            return await show_manage_day(callback, db, day, master_id)
+            return await show_manage_day(callback, db, config, day, master_id)
 
     closed = await db.toggle_slot_closed(day, callback_data.minutes, master_id)
     await notify(callback, "🔒 Время закрыто" if closed else "🔓 Время открыто")
-    await show_manage_day(callback, db, day, master_id)
+    await show_manage_day(callback, db, config, day, master_id)

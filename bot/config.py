@@ -4,11 +4,23 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from dotenv import load_dotenv
 
+load_dotenv()
+
+
+def _booking_days() -> int:
+    """На сколько дней вперёд открыта запись: BOOKING_DAYS из .env, от 1 до 90, по умолчанию 30."""
+    try:
+        days = int(os.getenv("BOOKING_DAYS", "30"))
+    except ValueError:
+        days = 30
+    return min(max(days, 1), 90)
+
+
 # Рабочий график и параметры записи (в минутах от начала суток)
 WORK_START_MIN = 10 * 60  # 10:00
 WORK_END_MIN = 20 * 60  # 20:00
 SLOT_STEP_MIN = 30  # шаг сетки времени
-BOOKING_DAYS = 14  # на сколько дней вперёд открыта запись
+BOOKING_DAYS = _booking_days()
 MIN_LEAD_MIN = 30  # не раньше чем за 30 минут до начала
 
 
@@ -25,8 +37,6 @@ class ConfigError(RuntimeError):
 
 
 def load_config() -> Config:
-    load_dotenv()
-
     token = os.getenv("BOT_TOKEN", "").strip()
     if not token:
         raise ConfigError("BOT_TOKEN не задан. Скопируйте .env.example в .env и укажите токен бота.")
