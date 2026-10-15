@@ -17,6 +17,7 @@ class ServiceCb(CallbackData, prefix="svc"):
 class MasterCb(CallbackData, prefix="mst"):
     service_id: int
     master_id: int
+    page: int = 0  # месяц календаря: 0 — текущий
 
 
 class DayCb(CallbackData, prefix="day"):
@@ -45,7 +46,7 @@ class CancelCb(CallbackData, prefix="cnl"):
 
 
 class NoopCb(CallbackData, prefix="noop"):
-    reason: str = ""  # past | full | ""
+    reason: str = ""  # past | far | full | ""
 
 
 class AdminCb(CallbackData, prefix="adm"):
@@ -53,6 +54,7 @@ class AdminCb(CallbackData, prefix="adm"):
     day: str = ""
     minutes: int = -1
     master_id: int = 0  # 0 — весь салон
+    page: int = 0  # месяц календаря: 0 — текущий
 
 
 class AdminApptCb(CallbackData, prefix="adma"):

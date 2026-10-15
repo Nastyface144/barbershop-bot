@@ -3,9 +3,11 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Message
 
 from bot import texts
+from bot.config import BOOKING_DAYS
 from bot.database import Database
 from bot.keyboards import client as kb
 from bot.keyboards.callbacks import MenuCb, NoopCb
+from bot.utils.formatting import plural
 from bot.utils.render import notify, render
 
 router = Router(name="common")
@@ -13,6 +15,7 @@ router = Router(name="common")
 NOOP_ALERTS = {
     "past": "Эта дата уже прошла.",
     "full": "На этот день записи нет.",
+    "far": f"Запись открыта на {BOOKING_DAYS} {plural(BOOKING_DAYS, ('день', 'дня', 'дней'))} вперёд.",
 }
 
 

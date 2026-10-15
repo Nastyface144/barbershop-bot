@@ -74,7 +74,7 @@ def cancel_confirm(appointment: Appointment) -> InlineKeyboardMarkup:
 
 
 def calendar(
-    first: date, last: date, closures: dict[date, set[tuple[int, int]]], action: str
+    first: date, last: date, closures: dict[date, set[tuple[int, int]]], action: str, page: int
 ) -> InlineKeyboardMarkup:
     """Календарь админа. action: day — открыть записи, manage — управление закрытиями."""
 
@@ -88,7 +88,11 @@ def calendar(
             label = str(day.day)
         return _btn(label, action, day)
 
-    rows = calendar_rows(first, last, cell)
+    def nav(target: int) -> str:
+        nav_action = "pick" if action == "day" else "cal"
+        return AdminCb(action=nav_action, page=target).pack()
+
+    rows = calendar_rows(first, last, page, cell, nav)
     rows.append([_btn("◀️ В панель", "panel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -101,6 +105,7 @@ def manage_day(
     salon: DayClosure,
     slots: list[int],
     booked_slots: set[int],
+    calendar_page: int,
 ) -> InlineKeyboardMarkup:
     """Сетка времени дня. own — закрытия выбранного раздела, salon — закрытия всего салона."""
     tabs = [_btn(("✅ " if master_id == SALON else "") + "🏠 Салон", "manage", day)]
@@ -129,5 +134,6 @@ def manage_day(
         rows.append([_btn("🔒 Закрыть весь день", "toggle_day", day, master_id=master_id)])
 
     rows.append([_btn("📋 Записи на этот день", "day", day)])
-    rows.append([_btn("◀️ К календарю", "cal")])
+    back = AdminCb(action="cal", page=calendar_page).pack()
+    rows.append([InlineKeyboardButton(text="◀️ К календарю", callback_data=back)])
     return InlineKeyboardMarkup(inline_keyboard=rows)

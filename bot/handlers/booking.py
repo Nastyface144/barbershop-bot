@@ -9,6 +9,7 @@ from bot import texts
 from bot.config import Config
 from bot.database import Database, Master, Service
 from bot.keyboards import client as kb
+from bot.keyboards.calendar import month_page
 from bot.keyboards.callbacks import ConfirmCb, DayCb, MasterCb, MenuCb, ServiceCb, TimeCb
 from bot.services import slots
 from bot.services.notify import notify_admins
@@ -50,10 +51,12 @@ async def show_masters(callback: CallbackQuery, db: Database, service: Service) 
 
 
 async def show_calendar(
-    callback: CallbackQuery, db: Database, config: Config, service: Service, master: Master
+    callback: CallbackQuery, db: Database, config: Config, service: Service, master: Master, page: int = 0
 ) -> None:
     availability = await slots.get_available_days(db, service, master.id, _now(config))
-    await render(callback, texts.choose_date(service, master), kb.calendar(service.id, master.id, availability))
+    await render(
+        callback, texts.choose_date(service, master), kb.calendar(service.id, master.id, availability, page)
+    )
 
 
 async def show_times(
@@ -61,12 +64,15 @@ async def show_times(
 ) -> None:
     now = _now(config)
     free = await slots.get_free_slots(db, service, master.id, day, now)
+    bookable = slots.is_bookable_day(day, now)
+    page = month_page(now.date(), day) if bookable else 0
     if not free:
-        reason = texts.DAY_FULL if slots.is_bookable_day(day, now) else texts.DAY_UNAVAILABLE
-        await notify(callback, reason, alert=True)
-        await show_calendar(callback, db, config, service, master)
+        await notify(callback, texts.DAY_FULL if bookable else texts.DAY_UNAVAILABLE, alert=True)
+        await show_calendar(callback, db, config, service, master, page)
         return
-    await render(callback, texts.choose_time(service, master, day), kb.times(service.id, master.id, day, free))
+    await render(
+        callback, texts.choose_time(service, master, day), kb.times(service.id, master.id, day, free, page)
+    )
 
 
 # --- Обработчики ---
@@ -90,7 +96,7 @@ async def on_master(callback: CallbackQuery, callback_data: MasterCb, db: Databa
     service, master = await _load(db, callback_data.service_id, callback_data.master_id)
     if service is None or master is None:
         return await _expired(callback, db)
-    await show_calendar(callback, db, config, service, master)
+    await show_calendar(callback, db, config, service, master, callback_data.page)
 
 
 @router.callback_query(DayCb.filter())

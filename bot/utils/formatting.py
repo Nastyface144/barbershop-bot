@@ -40,12 +40,13 @@ def fmt_duration(minutes: int) -> str:
     return f"{mins} мин"
 
 
-def fmt_month_range(first: date, last: date) -> str:
-    if (first.year, first.month) == (last.year, last.month):
-        return f"{MONTHS_NOM[first.month - 1]} {first.year}"
-    if first.year == last.year:
-        return f"{MONTHS_NOM[first.month - 1]} – {MONTHS_NOM[last.month - 1].lower()} {last.year}"
-    return f"{MONTHS_NOM[first.month - 1]} {first.year} – {MONTHS_NOM[last.month - 1].lower()} {last.year}"
+def plural(n: int, forms: tuple[str, str, str]) -> str:
+    """plural(5, ("день", "дня", "дней")) -> "дней"."""
+    if n % 10 == 1 and n % 100 != 11:
+        return forms[0]
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return forms[1]
+    return forms[2]
 
 
 def day_to_key(day: date) -> str:
