@@ -38,6 +38,7 @@ class ConfirmCb(CallbackData, prefix="ok"):
     master_id: int
     day: str
     minutes: int
+    pay: str = "salon"  # salon | online
 
 
 class CancelCb(CallbackData, prefix="cnl"):

@@ -24,6 +24,8 @@ BOOKING_DAYS = _booking_days()
 MIN_LEAD_MIN = 30  # не раньше чем за 30 минут до начала
 MAX_ACTIVE_BOOKINGS = 3  # сколько будущих записей может быть у одного клиента
 DAILY_DIGEST_HOUR = 9  # во сколько админ получает план на день
+PAYMENT_TIMEOUT_MIN = 15  # сколько минут время держится за клиентом, пока он оплачивает онлайн
+PAYMENT_CURRENCY = "RUB"
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,7 @@ class Config:
     admin_ids: frozenset[int]
     timezone: ZoneInfo
     db_path: str
+    payment_token: str = ""  # токен платёжного провайдера от @BotFather; пусто — только оплата в салоне
 
 
 class ConfigError(RuntimeError):
@@ -66,4 +69,5 @@ def load_config() -> Config:
         admin_ids=frozenset(admin_ids),
         timezone=timezone,
         db_path=db_path,
+        payment_token=os.getenv("PAYMENT_TOKEN", "").strip(),
     )

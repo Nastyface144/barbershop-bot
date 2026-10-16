@@ -26,12 +26,12 @@ async def show_my(callback: CallbackQuery, db: Database, config: Config, notice:
 async def _cancellable(
     callback: CallbackQuery, db: Database, config: Config, appointment_id: int
 ) -> Appointment | None:
-    """Запись принадлежит клиенту, активна и ещё не началась."""
+    """Запись принадлежит клиенту, активна (или ждёт оплаты) и ещё не началась."""
     appointment = await db.get_appointment(appointment_id)
     if (
         appointment is None
         or appointment.user_id != callback.from_user.id
-        or appointment.status != "active"
+        or appointment.status not in ("active", "pending")
         or appointment.starts_at(config.timezone) <= datetime.now(config.timezone)
     ):
         return None
@@ -64,4 +64,5 @@ async def on_cancel_yes(
     logger.info("Запись #%s отменена пользователем %s", appointment.id, callback.from_user.id)
     await notify(callback, "Запись отменена")
     await render(callback, texts.welcome(callback.from_user.first_name, texts.CANCELLED), kb.main_menu())
-    await notify_admins(bot, config, texts.admin_cancelled(appointment))
+    if appointment.status == "active":  # о неоплаченной брони админ и не знал
+        await notify_admins(bot, config, texts.admin_cancelled(appointment))

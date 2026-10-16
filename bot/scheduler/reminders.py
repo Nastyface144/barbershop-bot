@@ -8,11 +8,11 @@ import logging
 from datetime import datetime, timedelta
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot import texts
-from bot.config import DAILY_DIGEST_HOUR, Config
+from bot.config import DAILY_DIGEST_HOUR, PAYMENT_TIMEOUT_MIN, Config
 from bot.database import Appointment, Database
 from bot.keyboards import client as kb
 from bot.services.notify import notify_admins
@@ -64,6 +64,20 @@ async def send_reminders(bot: Bot, db: Database, config: Config) -> None:
         logger.exception("Ошибка в задаче напоминаний")
 
 
+async def expire_unpaid(bot: Bot, db: Database, config: Config) -> None:
+    """Освобождает время, если клиент не оплатил онлайн-запись вовремя."""
+    try:
+        now = datetime.now(config.timezone)
+        for appointment in await db.expire_pending(now - timedelta(minutes=PAYMENT_TIMEOUT_MIN)):
+            logger.info("Бронь #%s снята: не оплачена вовремя", appointment.id)
+            try:
+                await bot.send_message(appointment.user_id, texts.PAYMENT_EXPIRED, reply_markup=kb.main_menu())
+            except TelegramAPIError as e:
+                logger.warning("Не удалось сообщить об истёкшей брони #%s: %s", appointment.id, e)
+    except Exception:
+        logger.exception("Ошибка при снятии неоплаченных броней")
+
+
 async def send_daily_digest(bot: Bot, db: Database, config: Config) -> None:
     """Утренняя сводка записей на сегодня для администраторов."""
     try:
@@ -84,6 +98,15 @@ def setup_scheduler(bot: Bot, db: Database, config: Config) -> AsyncIOScheduler:
         max_instances=1,
         coalesce=True,
         next_run_time=datetime.now(config.timezone),
+    )
+    scheduler.add_job(
+        expire_unpaid,
+        "interval",
+        seconds=CHECK_INTERVAL_SECONDS,
+        args=(bot, db, config),
+        id="expire_unpaid",
+        max_instances=1,
+        coalesce=True,
     )
     scheduler.add_job(
         send_daily_digest,

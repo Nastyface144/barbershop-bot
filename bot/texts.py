@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from html import escape
 
 from bot import demo_data
-from bot.config import MAX_ACTIVE_BOOKINGS
+from bot.config import MAX_ACTIVE_BOOKINGS, PAYMENT_TIMEOUT_MIN
 from bot.database import Appointment, Master, Service
 from bot.utils.formatting import (
     client_label,
@@ -84,15 +84,31 @@ def _details(service_name: str, master_name: str, day: date, start: int, end: in
     )
 
 
-def confirm(service: Service, master: Master, day: date, start: int) -> str:
+def confirm(service: Service, master: Master, day: date, start: int, online: bool) -> str:
     details = _details(service.name, master.name, day, start, start + service.duration, service.price)
-    return f"📝 <b>Проверьте запись</b>\n\n{details}\n\nВсё верно?"
+    question = "Как удобнее оплатить?" if online else f"{PAY_IN_SALON}\n\nВсё верно?"
+    return f"📝 <b>Проверьте запись</b>\n\n{details}\n\n{question}"
+
+
+PAY_IN_SALON = "💵 Оплата в салоне: наличными или картой."
+PAID_ONLINE = "💳 Оплачено онлайн."
+
+
+def _payment_line(a: Appointment) -> str:
+    if a.paid:
+        return PAID_ONLINE
+    return PAY_IN_SALON
+
+
+def _payment_mark(a: Appointment) -> str:
+    """Короткая пометка об оплате для списков."""
+    return "💳 оплачено" if a.paid else "💵 в салоне"
 
 
 def booked(a: Appointment) -> str:
     details = _details(a.service_name, a.master_name, a.day, a.start_min, a.end_min, a.price)
     return (
-        f"✅ <b>Вы записаны!</b>\n\n{details}\n\n"
+        f"✅ <b>Вы записаны!</b>\n\n{details}\n{_payment_line(a)}\n\n"
         f"📍 {escape(demo_data.SHOP_ADDRESS)}\n\n"
         "Напомним о визите за сутки и за 2 часа. Ждём вас!\n\n"
         "Что-то ещё? 👇"
@@ -118,7 +134,7 @@ def my_appointments(appointments: list[Appointment], notice: str = "") -> str:
     for i, a in enumerate(appointments, 1):
         lines.append(
             f"\n<b>{i}. {fmt_date(a.day)}, {fmt_time(a.start_min)}</b>\n"
-            f"✂️ {escape(a.service_name)} — {fmt_price(a.price)}\n"
+            f"✂️ {escape(a.service_name)} — {fmt_price(a.price)} · {_payment_mark(a)}\n"
             f"👤 Мастер: {escape(a.master_name)}"
         )
     return "\n".join(lines)
@@ -126,7 +142,39 @@ def my_appointments(appointments: list[Appointment], notice: str = "") -> str:
 
 def cancel_confirm(a: Appointment) -> str:
     details = _details(a.service_name, a.master_name, a.day, a.start_min, a.end_min, a.price)
-    return f"❓ <b>Отменить запись?</b>\n\n{details}"
+    text = f"❓ <b>Отменить запись?</b>\n\n{details}"
+    if a.paid:
+        text += "\n\n💳 Запись оплачена онлайн — салон свяжется с вами, чтобы вернуть деньги."
+    return text
+
+
+# --- Онлайн-оплата ---
+
+
+def awaiting_payment(a: Appointment) -> str:
+    details = _details(a.service_name, a.master_name, a.day, a.start_min, a.end_min, a.price)
+    return (
+        f"💳 <b>Оплата записи</b>\n\n{details}\n\n"
+        f"Счёт отправлен ниже 👇 Время закреплено за вами на {PAYMENT_TIMEOUT_MIN} минут — "
+        "если не оплатить, оно освободится."
+    )
+
+
+def invoice_title() -> str:
+    return demo_data.SHOP_NAME[:32]
+
+
+def invoice_description(a: Appointment) -> str:
+    return f"{a.service_name} · мастер {a.master_name} · {fmt_date(a.day)}, {fmt_time(a.start_min)}"[:255]
+
+
+PAYMENT_UNAVAILABLE = "Онлайн-оплата сейчас недоступна. Выберите оплату в салоне."
+PAYMENT_EXPIRED_ALERT = "Время на оплату истекло. Запишитесь заново."
+PAYMENT_EXPIRED = "⏳ Время на оплату истекло, и запись не создана. Время снова свободно — можно записаться ещё раз."
+PAID_BUT_TAKEN = (
+    "😔 Оплата прошла, но время уже занято. Салон свяжется с вами, чтобы вернуть деньги "
+    "или подобрать другое время."
+)
 
 
 CANCELLED = "✅ Запись отменена."
@@ -159,8 +207,12 @@ def _admin_details(a: Appointment) -> str:
         f"👤 {client_label(a.client_name, a.username)}\n"
         f"✂️ {escape(a.service_name)} — {fmt_price(a.price)}\n"
         f"💈 Мастер: {escape(a.master_name)}\n"
-        f"🗓 {fmt_date(a.day)}, {fmt_time(a.start_min)}–{fmt_time(a.end_min)}"
+        f"🗓 {fmt_date(a.day)}, {fmt_time(a.start_min)}–{fmt_time(a.end_min)}\n"
+        f"{_payment_line(a)}"
     )
+
+
+REFUND_NOTE = "\n\n⚠️ Запись была оплачена онлайн — верните деньги клиенту."
 
 
 def admin_new_booking(a: Appointment) -> str:
@@ -168,11 +220,21 @@ def admin_new_booking(a: Appointment) -> str:
 
 
 def admin_cancelled(a: Appointment) -> str:
-    return f"❌ <b>Клиент отменил запись</b>\n\n{_admin_details(a)}"
+    return f"❌ <b>Клиент отменил запись</b>\n\n{_admin_details(a)}" + (REFUND_NOTE if a.paid else "")
+
+
+def admin_paid_but_taken(a: Appointment) -> str:
+    return (
+        f"⚠️ <b>Оплата пришла, но время уже занято</b>\n\n{_admin_details(a)}\n\n"
+        "Клиент оплатил после того, как бронь истекла и время заняли. "
+        "Свяжитесь с клиентом: верните деньги или предложите другое время."
+    )
 
 
 def admin_cancelled_by_admin(a: Appointment, admin_name: str) -> str:
-    return f"❌ <b>Запись отменена администратором</b> ({escape(admin_name)})\n\n{_admin_details(a)}"
+    return f"❌ <b>Запись отменена администратором</b> ({escape(admin_name)})\n\n{_admin_details(a)}" + (
+        REFUND_NOTE if a.paid else ""
+    )
 
 
 def admin_panel(today_count: int, tomorrow_count: int, notice: str = "") -> str:
@@ -207,7 +269,7 @@ def admin_day(
     for shown, a in enumerate(appointments):
         block = (
             f"\n\n<b>{fmt_time(a.start_min)}–{fmt_time(a.end_min)}</b> · {escape(a.master_name)}\n"
-            f"✂️ {escape(a.service_name)} — {fmt_price(a.price)}\n"
+            f"✂️ {escape(a.service_name)} — {fmt_price(a.price)} · {_payment_mark(a)}\n"
             f"👤 {client_label(a.client_name, a.username)}"
         )
         if len(text) + len(block) > MESSAGE_LIMIT:
@@ -229,7 +291,7 @@ def admin_cancel_confirm(a: Appointment) -> str:
     return (
         f"❓ <b>Отменить запись клиента?</b>\n\n{_admin_details(a)}\n\n"
         "Клиент получит сообщение об отмене."
-    )
+    ) + (REFUND_NOTE if a.paid else "")
 
 
 def admin_cancelled_notice(delivered: bool) -> str:
@@ -242,7 +304,8 @@ def cancelled_by_salon(a: Appointment) -> str:
     details = _details(a.service_name, a.master_name, a.day, a.start_min, a.end_min, a.price)
     return (
         f"😔 <b>Запись отменена салоном</b>\n\n{details}\n\n"
-        "Приносим извинения! Выберите другое удобное время — это займёт минуту."
+        + ("💳 Деньги за онлайн-оплату вернём — салон свяжется с вами.\n\n" if a.paid else "")
+        + "Приносим извинения! Выберите другое удобное время — это займёт минуту."
     )
 
 
