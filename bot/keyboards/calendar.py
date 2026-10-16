@@ -1,14 +1,20 @@
 from collections.abc import Callable
 from datetime import date, timedelta
 
-from aiogram.types import InlineKeyboardButton
+from aiogram.types import DisabledButton, InlineKeyboardButton
 
 from bot.keyboards.callbacks import NoopCb
 from bot.utils.formatting import MONTHS_NOM, WEEKDAYS_HEADER
 
 
 def noop_button(text: str, reason: str = "") -> InlineKeyboardButton:
+    """Кнопка без действия: при нажатии бот показывает подсказку `reason`."""
     return InlineKeyboardButton(text=text, callback_data=NoopCb(reason=reason).pack())
+
+
+def disabled_button(text: str) -> InlineKeyboardButton:
+    """Неактивная кнопка: Telegram показывает её приглушённой, нажать на неё нельзя."""
+    return InlineKeyboardButton(text=text, disabled=DisabledButton())
 
 
 def _add_months(day: date, months: int) -> date:
@@ -32,8 +38,8 @@ def calendar_rows(
     """Календарь одного месяца из окна дат `first`–`last`, со стрелками между месяцами.
 
     `page` — смещение месяца от месяца `first`, `nav(page)` возвращает callback_data
-    для перехода на другую страницу. Прошедшие дни показываются точкой, дни за
-    пределами окна записи — точкой с подсказкой.
+    для перехода на другую страницу. Прошедшие дни и дни за пределами окна записи
+    показываются неактивными.
     """
     last_page = month_page(first, last)
     page = min(max(page, 0), last_page)
@@ -43,15 +49,15 @@ def calendar_rows(
     def arrow(text: str, target: int) -> InlineKeyboardButton:
         if 0 <= target <= last_page:
             return InlineKeyboardButton(text=text, callback_data=nav(target))
-        return noop_button(" ")
+        return disabled_button(" ")
 
     rows = [
         [
             arrow("◀️", page - 1),
-            noop_button(f"{MONTHS_NOM[month_start.month - 1]} {month_start.year}"),
+            disabled_button(f"{MONTHS_NOM[month_start.month - 1]} {month_start.year}"),
             arrow("▶️", page + 1),
         ],
-        [noop_button(name) for name in WEEKDAYS_HEADER],
+        [disabled_button(name) for name in WEEKDAYS_HEADER],
     ]
 
     visible_first = max(first, month_start)
@@ -61,11 +67,9 @@ def calendar_rows(
     week: list[InlineKeyboardButton] = []
     while current <= end:
         if current.month != month_start.month:
-            week.append(noop_button(" "))
-        elif current < first:
-            week.append(noop_button("·", "past"))
-        elif current > last:
-            week.append(noop_button("·", "far"))
+            week.append(disabled_button(" "))
+        elif current < first or current > last:
+            week.append(disabled_button(str(current.day)))
         else:
             week.append(cell(current))
         if len(week) == 7:

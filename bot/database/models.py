@@ -36,6 +36,9 @@ class Appointment:
     status: str
     reminded_24: bool
     reminded_2: bool
+    payment: str = "salon"  # salon | online
+    paid: bool = False
+    created_at: str = ""
 
     def starts_at(self, tz: ZoneInfo) -> datetime:
         return datetime.combine(self.day, time(), tzinfo=tz) + timedelta(minutes=self.start_min)

@@ -9,6 +9,8 @@ from bot.database.models import Appointment, DayClosure, Master, Service
 
 logger = logging.getLogger(__name__)
 
+# Статусы записи: active — подтверждена; pending — ждёт онлайн-оплаты (время уже закреплено);
+# cancelled — отменена; expired — не оплачена вовремя
 FULL_DAY = -1  # значение start_min для закрытия всего дня
 SALON = 0  # значение master_id для закрытия всего салона
 
@@ -41,7 +43,10 @@ CREATE TABLE IF NOT EXISTS appointments (
     status      TEXT NOT NULL DEFAULT 'active',
     reminded_24 INTEGER NOT NULL DEFAULT 0,
     reminded_2  INTEGER NOT NULL DEFAULT 0,
-    created_at  TEXT NOT NULL
+    created_at  TEXT NOT NULL,
+    payment     TEXT NOT NULL DEFAULT 'salon',
+    paid        INTEGER NOT NULL DEFAULT 0,
+    charge_id   TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_appointments_master_day
@@ -70,10 +75,17 @@ INSERT INTO closures (day, master_id, start_min) SELECT day, 0, start_min FROM c
 DROP TABLE closures_old;
 """
 
+# Колонки оплаты, добавленные после первой версии
+PAYMENT_COLUMNS = {
+    "payment": "TEXT NOT NULL DEFAULT 'salon'",
+    "paid": "INTEGER NOT NULL DEFAULT 0",
+    "charge_id": "TEXT",
+}
+
 APPOINTMENT_SELECT = """
 SELECT a.id, a.user_id, a.client_name, a.username, a.service_id, s.name AS service_name,
        a.master_id, m.name AS master_name, a.day, a.start_min, a.end_min, a.price,
-       a.status, a.reminded_24, a.reminded_2
+       a.status, a.reminded_24, a.reminded_2, a.payment, a.paid, a.created_at
 FROM appointments a
 JOIN services s ON s.id = a.service_id
 JOIN masters m ON m.id = a.master_id
@@ -97,6 +109,9 @@ def _appointment(row: aiosqlite.Row) -> Appointment:
         status=row["status"],
         reminded_24=bool(row["reminded_24"]),
         reminded_2=bool(row["reminded_2"]),
+        payment=row["payment"],
+        paid=bool(row["paid"]),
+        created_at=row["created_at"],
     )
 
 
@@ -133,6 +148,13 @@ class Database:
         if "master_id" not in columns:
             logger.info("Обновляю таблицу закрытий: добавляю закрытия по мастерам")
             await self.conn.executescript(MIGRATE_CLOSURES)
+
+        async with self.conn.execute("PRAGMA table_info(appointments)") as cur:
+            columns = {row["name"] for row in await cur.fetchall()}
+        for name, definition in PAYMENT_COLUMNS.items():
+            if name not in columns:
+                logger.info("Обновляю таблицу записей: добавляю колонку %s", name)
+                await self.conn.execute(f"ALTER TABLE appointments ADD COLUMN {name} {definition}")
 
     async def _seed(self) -> None:
         async with self.conn.execute("SELECT COUNT(*) FROM masters") as cur:
@@ -182,7 +204,7 @@ class Database:
         busy: dict[date, list[tuple[int, int]]] = defaultdict(list)
         async with self.conn.execute(
             "SELECT day, start_min, end_min FROM appointments "
-            "WHERE master_id = ? AND status = 'active' AND day BETWEEN ? AND ?",
+            "WHERE master_id = ? AND status IN ('active', 'pending') AND day BETWEEN ? AND ?",
             (master_id, first.isoformat(), last.isoformat()),
         ) as cur:
             for row in await cur.fetchall():
@@ -249,11 +271,13 @@ class Database:
         reminded_24: bool,
         reminded_2: bool,
         created_at: datetime,
+        status: str = "active",
+        payment: str = "salon",
     ) -> Appointment:
         cur = await self.conn.execute(
             "INSERT INTO appointments (user_id, client_name, username, service_id, master_id, day, "
-            "start_min, end_min, price, reminded_24, reminded_2, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "start_min, end_min, price, reminded_24, reminded_2, created_at, status, payment) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 user_id,
                 client_name,
@@ -267,6 +291,8 @@ class Database:
                 int(reminded_24),
                 int(reminded_2),
                 created_at.isoformat(timespec="seconds"),
+                status,
+                payment,
             ),
         )
         await self.conn.commit()
@@ -279,13 +305,16 @@ class Database:
             row = await cur.fetchone()
         return _appointment(row) if row else None
 
-    async def get_user_appointments(self, user_id: int, now: datetime) -> list[Appointment]:
-        """Будущие активные записи клиента."""
+    async def get_user_appointments(
+        self, user_id: int, now: datetime, include_pending: bool = False
+    ) -> list[Appointment]:
+        """Будущие активные записи клиента (с include_pending — и ожидающие оплаты)."""
         now_min = now.hour * 60 + now.minute
         today = now.date().isoformat()
+        statuses = "('active', 'pending')" if include_pending else "('active')"
         async with self.conn.execute(
             APPOINTMENT_SELECT
-            + "WHERE a.user_id = ? AND a.status = 'active' "
+            + f"WHERE a.user_id = ? AND a.status IN {statuses} "
             "AND (a.day > ? OR (a.day = ? AND a.start_min > ?)) "
             "ORDER BY a.day, a.start_min",
             (user_id, today, today, now_min),
@@ -308,11 +337,46 @@ class Database:
 
     async def cancel_appointment(self, appointment_id: int) -> bool:
         cur = await self.conn.execute(
-            "UPDATE appointments SET status = 'cancelled' WHERE id = ? AND status = 'active'",
+            "UPDATE appointments SET status = 'cancelled' WHERE id = ? AND status IN ('active', 'pending')",
             (appointment_id,),
         )
         await self.conn.commit()
         return cur.rowcount > 0
+
+    # --- Онлайн-оплата ---
+
+    async def confirm_payment(
+        self, appointment_id: int, charge_id: str, *, reminded_24: bool, reminded_2: bool
+    ) -> None:
+        """Отмечает запись оплаченной и подтверждённой."""
+        await self.conn.execute(
+            "UPDATE appointments SET status = 'active', paid = 1, charge_id = ?, reminded_24 = ?, reminded_2 = ? "
+            "WHERE id = ?",
+            (charge_id, int(reminded_24), int(reminded_2), appointment_id),
+        )
+        await self.conn.commit()
+
+    async def mark_paid(self, appointment_id: int, charge_id: str) -> None:
+        """Сохраняет оплату, не меняя статус записи (например, если время уже занято)."""
+        await self.conn.execute(
+            "UPDATE appointments SET paid = 1, charge_id = ? WHERE id = ?", (charge_id, appointment_id)
+        )
+        await self.conn.commit()
+
+    async def expire_pending(self, created_before: datetime) -> list[Appointment]:
+        """Снимает с брони записи, которые не оплатили вовремя, и возвращает их."""
+        async with self.conn.execute(
+            APPOINTMENT_SELECT + "WHERE a.status = 'pending' AND a.created_at < ?",
+            (created_before.isoformat(timespec="seconds"),),
+        ) as cur:
+            expired = [_appointment(row) for row in await cur.fetchall()]
+        if expired:
+            await self.conn.executemany(
+                "UPDATE appointments SET status = 'expired' WHERE id = ? AND status = 'pending'",
+                [(a.id,) for a in expired],
+            )
+            await self.conn.commit()
+        return expired
 
     # --- Напоминания ---
 

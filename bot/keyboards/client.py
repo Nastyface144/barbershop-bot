@@ -4,7 +4,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot import demo_data
 from bot.database import Appointment, Master, Service
-from bot.keyboards.calendar import calendar_rows, noop_button
+from bot.keyboards.calendar import calendar_rows, disabled_button, noop_button
 from bot.keyboards.callbacks import (
     CancelCb,
     ConfirmCb,
@@ -14,6 +14,7 @@ from bot.keyboards.callbacks import (
     ServiceCb,
     TimeCb,
 )
+from bot.services.slots import DAY_FREE, DAY_FULL
 from bot.utils.formatting import day_to_key, fmt_date_short, fmt_price, fmt_time
 
 TIMES_PER_ROW = 4
@@ -83,13 +84,16 @@ def masters(service_id: int, items: list[Master]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def calendar(service_id: int, master_id: int, availability: dict[date, bool], page: int) -> InlineKeyboardMarkup:
+def calendar(service_id: int, master_id: int, availability: dict[date, str], page: int) -> InlineKeyboardMarkup:
     days = sorted(availability)
 
     def cell(day: date) -> InlineKeyboardButton:
-        if availability.get(day):
+        state = availability.get(day)
+        if state == DAY_FREE:
             return _btn(str(day.day), DayCb(service_id=service_id, master_id=master_id, day=day_to_key(day)))
-        return noop_button("✖", "full")
+        if state == DAY_FULL:
+            return noop_button("✖", "full")
+        return disabled_button(str(day.day))
 
     def nav(target: int) -> str:
         return MasterCb(service_id=service_id, master_id=master_id, page=target).pack()
@@ -99,24 +103,40 @@ def calendar(service_id: int, master_id: int, availability: dict[date, bool], pa
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def times(service_id: int, master_id: int, day: date, slots: list[int], page: int) -> InlineKeyboardMarkup:
+def times(service_id: int, master_id: int, day: date, grid: list[tuple[int, bool]], page: int) -> InlineKeyboardMarkup:
+    """Сетка времени: свободное можно выбрать, занятое показано крестиком и неактивно."""
     key = day_to_key(day)
     buttons = [
         _btn(fmt_time(m), TimeCb(service_id=service_id, master_id=master_id, day=key, minutes=m))
-        for m in slots
+        if free
+        else disabled_button(f"✖ {fmt_time(m)}")
+        for m, free in grid
     ]
     rows = [buttons[i : i + TIMES_PER_ROW] for i in range(0, len(buttons), TIMES_PER_ROW)]
     rows.append(_back(MasterCb(service_id=service_id, master_id=master_id, page=page)))
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def confirm(service_id: int, master_id: int, day: date, minutes: int) -> InlineKeyboardMarkup:
+def confirm(service_id: int, master_id: int, day: date, minutes: int, online: bool) -> InlineKeyboardMarkup:
     key = day_to_key(day)
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [_btn("✅ Подтвердить", ConfirmCb(service_id=service_id, master_id=master_id, day=key, minutes=minutes))],
-            _back(DayCb(service_id=service_id, master_id=master_id, day=key)),
+
+    def pay(method: str) -> ConfirmCb:
+        return ConfirmCb(service_id=service_id, master_id=master_id, day=key, minutes=minutes, pay=method)
+
+    if online:
+        rows = [
+            [_btn("💳 Оплатить онлайн", pay("online"))],
+            [_btn("💵 В салоне: наличные или карта", pay("salon"))],
         ]
+    else:
+        rows = [[_btn("✅ Подтвердить запись", pay("salon"))]]
+    rows.append(_back(DayCb(service_id=service_id, master_id=master_id, day=key)))
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def awaiting_payment(appointment_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[_btn("❌ Отменить запись", CancelCb(appointment_id=appointment_id, action="ask"))]]
     )
 
 
