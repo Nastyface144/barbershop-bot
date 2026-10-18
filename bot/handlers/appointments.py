@@ -10,6 +10,7 @@ from bot.config import Config
 from bot.database import Appointment, Database
 from bot.keyboards import client as kb
 from bot.keyboards.callbacks import CancelCb, MenuCb
+from bot.handlers.common import show_main
 from bot.services.notify import notify_admins
 from bot.utils.render import notify, render
 
@@ -63,6 +64,6 @@ async def on_cancel_yes(
 
     logger.info("Запись #%s отменена пользователем %s", appointment.id, callback.from_user.id)
     await notify(callback, "Запись отменена")
-    await render(callback, texts.welcome(callback.from_user.first_name, texts.CANCELLED), kb.main_menu())
+    await show_main(callback, db, config, notice=texts.CANCELLED)
     if appointment.status == "active":  # о неоплаченной брони админ и не знал
         await notify_admins(bot, config, texts.admin_cancelled(appointment))

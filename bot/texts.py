@@ -17,30 +17,39 @@ from bot.utils.formatting import (
 TOTAL_STEPS = 4
 
 
-def welcome(name: str, notice: str = "") -> str:
+def welcome(name: str, upcoming: Appointment | None = None, notice: str = "") -> str:
     head = f"{notice}\n\n" if notice else ""
-    return (
-        f"{head}💈 <b>{escape(demo_data.SHOP_NAME)}</b>\n\n"
-        f"Привет, {escape(name)}! Здесь можно записаться к барберу за минуту — "
-        "без звонков и ожидания.\n\n"
-        "Выберите, что нужно 👇"
-    )
+    text = f"{head}💈 <b>{escape(demo_data.SHOP_NAME)}</b>\n\n"
+    if upcoming:
+        text += (
+            f"Здравствуйте, {escape(name)}! Ждём вас\n"
+            f"<b>{fmt_date(upcoming.day)}, {fmt_time(upcoming.start_min)}</b> · "
+            f"{escape(upcoming.service_name)}, мастер {escape(upcoming.master_name)}"
+        )
+    else:
+        text += f"Здравствуйте, {escape(name)}! Запишитесь к барберу за минуту — без звонков."
+    return text
 
 
-def services_and_prices(services: list[Service]) -> str:
-    lines = ["💈 <b>Услуги и цены</b>\n"]
+def about(services: list[Service]) -> str:
+    lines = [f"💈 <b>{escape(demo_data.SHOP_NAME)}</b>\n"]
     for s in services:
-        lines.append(f"{s.emoji} <b>{escape(s.name)}</b>\n      {fmt_price(s.price)} · {fmt_duration(s.duration)}")
-    return "\n".join(lines)
-
-
-def contacts() -> str:
-    return (
-        f"📍 <b>Контакты</b>\n\n"
-        f"🏠 {escape(demo_data.SHOP_ADDRESS)}\n"
+        lines.append(f"{s.emoji} {escape(s.name)} — <b>{fmt_price(s.price)}</b> · {fmt_duration(s.duration)}")
+    lines.append(
+        f"\n📍 {escape(demo_data.SHOP_ADDRESS)}\n"
         f"📞 {escape(demo_data.SHOP_PHONE)}\n"
         f"🕐 {escape(demo_data.SHOP_HOURS)}"
     )
+    return "\n".join(lines)
+
+
+# Текст в пустом чате до нажатия «Старт» и в профиле бота
+BOT_DESCRIPTION = (
+    f"💈 {demo_data.SHOP_NAME}\n\n"
+    "Онлайн-запись к барберу за минуту: выберите услугу, мастера и удобное время. "
+    "Напомним о визите заранее."
+)
+BOT_SHORT_DESCRIPTION = f"Онлайн-запись в {demo_data.SHOP_NAME} — без звонков, за минуту."
 
 
 def _step(n: int) -> str:
@@ -63,7 +72,7 @@ def choose_service() -> str:
 
 
 def choose_master(service: Service) -> str:
-    return f"{_step(2)}\n\n{_summary(service)}\n\nВыберите мастера:"
+    return f"{_step(2)}\n\n{_summary(service)}\n\nВыберите мастера или доверьтесь нам:"
 
 
 def choose_date(service: Service, master: Master) -> str:
@@ -110,8 +119,7 @@ def booked(a: Appointment) -> str:
     return (
         f"✅ <b>Вы записаны!</b>\n\n{details}\n{_payment_line(a)}\n\n"
         f"📍 {escape(demo_data.SHOP_ADDRESS)}\n\n"
-        "Напомним о визите за сутки и за 2 часа. Ждём вас!\n\n"
-        "Что-то ещё? 👇"
+        "Напомним о визите за сутки и за 2 часа. Ждём вас!"
     )
 
 
@@ -204,7 +212,7 @@ def reminder(a: Appointment, today: date) -> str:
 
 def _admin_details(a: Appointment) -> str:
     return (
-        f"👤 {client_label(a.client_name, a.username)}\n"
+        f"👤 {client_label(a.client_name, a.username, a.user_id)}\n"
         f"✂️ {escape(a.service_name)} — {fmt_price(a.price)}\n"
         f"💈 Мастер: {escape(a.master_name)}\n"
         f"🗓 {fmt_date(a.day)}, {fmt_time(a.start_min)}–{fmt_time(a.end_min)}\n"
@@ -270,7 +278,7 @@ def admin_day(
         block = (
             f"\n\n<b>{fmt_time(a.start_min)}–{fmt_time(a.end_min)}</b> · {escape(a.master_name)}\n"
             f"✂️ {escape(a.service_name)} — {fmt_price(a.price)} · {_payment_mark(a)}\n"
-            f"👤 {client_label(a.client_name, a.username)}"
+            f"👤 {client_label(a.client_name, a.username, a.user_id)}"
         )
         if len(text) + len(block) > MESSAGE_LIMIT:
             rest = len(appointments) - shown

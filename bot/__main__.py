@@ -8,6 +8,7 @@ from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramAPIError, TelegramNetworkError, TelegramUnauthorizedError
 from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
 
+from bot import texts
 from bot.config import Config, ConfigError, load_config
 from bot.database import Database
 from bot.handlers import get_routers
@@ -16,6 +17,15 @@ from bot.middlewares import CallbackAnswerMiddleware
 from bot.scheduler import setup_scheduler
 
 logger = logging.getLogger("bot")
+
+
+async def set_profile(bot: Bot) -> None:
+    """Описание бота в пустом чате и в профиле."""
+    try:
+        await bot.set_my_description(texts.BOT_DESCRIPTION)
+        await bot.set_my_short_description(texts.BOT_SHORT_DESCRIPTION)
+    except TelegramAPIError as e:
+        logger.warning("Не удалось обновить описание бота: %s", e)
 
 
 async def set_commands(bot: Bot, config: Config) -> None:
@@ -61,6 +71,7 @@ async def main() -> None:
 
     try:
         await set_commands(bot, config)
+        await set_profile(bot)
         await bot.delete_webhook(drop_pending_updates=True)
         scheduler.start()
         me = await bot.get_me()

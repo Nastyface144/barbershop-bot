@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 router = Router(name="booking")
 
+# «Любой мастер»: бот подберёт свободного при подтверждении
+ANY_MASTER = Master(id=slots.ANY_MASTER, name="любой свободный", description="")
+
 INVOICE_PREFIX = "appointment:"  # payload счёта: appointment:<id>
 
 BOOKING_ERRORS = {
@@ -39,7 +42,10 @@ async def _load(
     db: Database, service_id: int, master_id: int | None = None
 ) -> tuple[Service | None, Master | None]:
     service = await db.get_service(service_id)
-    master = await db.get_master(master_id) if master_id is not None else None
+    if master_id == slots.ANY_MASTER:
+        master = ANY_MASTER
+    else:
+        master = await db.get_master(master_id) if master_id is not None else None
     return service, master
 
 

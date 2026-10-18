@@ -14,7 +14,7 @@ from bot.keyboards.callbacks import (
     ServiceCb,
     TimeCb,
 )
-from bot.services.slots import DAY_FREE, DAY_FULL
+from bot.services.slots import ANY_MASTER, DAY_FREE, DAY_FULL
 from bot.utils.formatting import day_to_key, fmt_date_short, fmt_price, fmt_time
 
 TIMES_PER_ROW = 4
@@ -32,35 +32,24 @@ def main_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [_btn("✂️ Записаться", MenuCb(action="book"))],
-            [_btn("📋 Мои записи", MenuCb(action="my"))],
             [
-                _btn("💈 Услуги и цены", MenuCb(action="services")),
-                _btn("📍 Контакты", MenuCb(action="contacts")),
+                _btn("📋 Мои записи", MenuCb(action="my")),
+                _btn("💈 О салоне", MenuCb(action="about")),
             ],
         ]
     )
 
 
-def services_info() -> InlineKeyboardMarkup:
+def about() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [_btn("✂️ Записаться", MenuCb(action="book"))],
-            _back(MenuCb(action="main")),
+            [
+                InlineKeyboardButton(text="🗺 Маршрут", url=demo_data.SHOP_MAP_URL),
+                _btn("◀️ Назад", MenuCb(action="main")),
+            ],
         ]
     )
-
-
-def contacts() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🗺 Открыть на карте", url=demo_data.SHOP_MAP_URL)],
-            _back(MenuCb(action="main")),
-        ]
-    )
-
-
-def back_to_menu() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[_back(MenuCb(action="main"))])
 
 
 # --- Запись ---
@@ -76,8 +65,9 @@ def services(items: list[Service]) -> InlineKeyboardMarkup:
 
 
 def masters(service_id: int, items: list[Master]) -> InlineKeyboardMarkup:
-    rows = [
-        [_btn(f"👤 {m.name} — {m.description}", MasterCb(service_id=service_id, master_id=m.id))]
+    rows = [[_btn("⚡ Любой мастер — ближайшее время", MasterCb(service_id=service_id, master_id=ANY_MASTER))]]
+    rows += [
+        [_btn(f"👤 {m.name} · {m.description}", MasterCb(service_id=service_id, master_id=m.id))]
         for m in items
     ]
     rows.append(_back(MenuCb(action="book")))

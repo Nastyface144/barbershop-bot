@@ -60,8 +60,11 @@ def key_to_day(key: str) -> date | None:
         return None
 
 
-def client_label(name: str, username: str | None) -> str:
+def client_label(name: str, username: str | None, user_id: int | None = None) -> str:
+    """Имя клиента для админа. С user_id имя кликабельно и открывает чат с клиентом."""
     label = escape(name or "Без имени")
+    if user_id:
+        label = f'<a href="tg://user?id={user_id}">{label}</a>'
     if username:
         label += f" (@{escape(username)})"
     return label

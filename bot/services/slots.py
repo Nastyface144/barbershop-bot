@@ -71,9 +71,30 @@ def free_slots_for_day(
     return [start for start, free in grid if free]
 
 
+ANY_MASTER = 0  # master_id «любой мастер»: бот подберёт свободного сам
+
+
+async def _master_ids(db: Database, master_id: int) -> list[int]:
+    if master_id == ANY_MASTER:
+        return [m.id for m in await db.get_masters()]
+    return [master_id]
+
+
+def _merge_grids(grids: list[list[tuple[int, bool]]]) -> list[tuple[int, bool]]:
+    """Сетка «любого мастера»: время свободно, если свободно хотя бы у одного."""
+    merged: dict[int, bool] = {}
+    for grid in grids:
+        for start, free in grid:
+            merged[start] = merged.get(start, False) or free
+    return sorted(merged.items())
+
+
 async def get_slot_grid(
     db: Database, service: Service, master_id: int, day: date, now: datetime
 ) -> list[tuple[int, bool]]:
+    if master_id == ANY_MASTER:
+        ids = await _master_ids(db, master_id)
+        return _merge_grids([await get_slot_grid(db, service, mid, day, now) for mid in ids])
     if not is_bookable_day(day, now):
         return []
     busy = await db.get_busy(master_id, day, day)
@@ -93,6 +114,13 @@ DAY_OFF = "off"  # нерабочий день или рабочее время 
 
 async def get_available_days(db: Database, service: Service, master_id: int, now: datetime) -> dict[date, str]:
     """Состояние каждого дня окна записи: DAY_FREE, DAY_FULL или DAY_OFF."""
+    if master_id == ANY_MASTER:
+        per_master = [await get_available_days(db, service, mid, now) for mid in await _master_ids(db, master_id)]
+        result = {}
+        for day in per_master[0] if per_master else {}:
+            states = {days[day] for days in per_master}
+            result[day] = DAY_FREE if DAY_FREE in states else DAY_FULL if DAY_FULL in states else DAY_OFF
+        return result
     first, last = booking_window(now)
     busy = await db.get_busy(master_id, first, last)
     closures = await db.get_closures(first, last, (SALON, master_id))
@@ -129,6 +157,18 @@ def overlaps_own(start: int, end: int, day: date, own: list[Appointment]) -> boo
     return any(a.day == day and start < a.end_min and a.start_min < end for a in own)
 
 
+async def _pick_master(
+    db: Database, service: Service, master_id: int, day: date, start_min: int, now: datetime
+) -> int | None:
+    """Мастер, у которого это время свободно. Для «любого» — наименее загруженный в этот день."""
+    candidates = []
+    for mid in await _master_ids(db, master_id):
+        if start_min in await get_free_slots(db, service, mid, day, now):
+            busy = await db.get_busy(mid, day, day)
+            candidates.append((len(busy.get(day, [])), mid))
+    return min(candidates)[1] if candidates else None
+
+
 async def book(
     db: Database,
     *,
@@ -153,7 +193,8 @@ async def book(
             raise BookingError("overlap")
         if len(own) >= MAX_ACTIVE_BOOKINGS:
             raise BookingError("limit")
-        if start_min not in await get_free_slots(db, service, master_id, day, now):
+        master_id = await _pick_master(db, service, master_id, day, start_min, now)
+        if master_id is None:
             raise BookingError("taken")
 
         starts_at = datetime.combine(day, datetime.min.time(), tzinfo=now.tzinfo) + timedelta(minutes=start_min)
